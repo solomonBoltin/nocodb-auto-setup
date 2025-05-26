@@ -1,5 +1,9 @@
-import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+import fetch from 'node-fetch';
+
+
+
+
 
 // Load environment variables
 dotenv.config();
@@ -21,27 +25,27 @@ dotenv.config();
 const CONFIG = {
     // NocoDB Configuration
     nocodb: {
-        baseUrl: process.env.NOCODB_BASE_URL || 'http://localhost:8080',
+        baseUrl: process.env.NOCODB_BASE_URL,
         credentials: {
-            email: process.env.NOCODB_EMAIL || 'admin@example.com',
-            password: process.env.NOCODB_PASSWORD || 'admin1234'
+            email: process.env.NOCODB_EMAIL,
+            password: process.env.NOCODB_PASSWORD, 
         }
     },
 
     // PostgreSQL Configuration
     postgres: {
-        host: process.env.POSTGRES_HOST || 'postgres_db',
-        port: process.env.POSTGRES_PORT || 5432,
-        user: process.env.POSTGRES_USER || 'nocouser',
-        password: process.env.POSTGRES_PASSWORD || 'yoursecurepassword',
-        database: process.env.POSTGRES_DB || 'nocodb_starter',
+        host: process.env.POSTGRES_HOST,
+        port: process.env.POSTGRES_PORT,
+        user: process.env.POSTGRES_USER,
+        password: process.env.POSTGRES_PASSWORD,
+        database: process.env.POSTGRES_DB,
         ssl: process.env.POSTGRES_SSL === 'true'
     },
 
     // Base Configuration
     base: {
         title: process.env.BASE_TITLE || 'Automated App Base (Postgres)',
-        sourceAlias: process.env.SOURCE_ALIAS || 'AutomatedProductionPostgres'
+        sourceAlias: process.env.SOURCE_TITLE || 'AutomatedProductionPostgres'
     }
 };
 
@@ -59,6 +63,7 @@ const CONFIG = {
  */
 async function makeNocoDBRequest(apiPath, method = 'GET', body = null, authToken = null) {
     const url = `${CONFIG.nocodb.baseUrl}${apiPath}`;
+    console.log(`Making request to: ${url}`);
     const headers = {
         'Content-Type': 'application/json'
     };
@@ -146,6 +151,7 @@ async function signIn(email, password) {
     console.log(`\n🔐 Signing in as: ${email}`);
 
     const payload = { email, password };
+    console.log('Signing in with payload:', payload);
     const response = await makeNocoDBRequest('/api/v1/auth/user/signin', 'POST', payload);
 
     if (!response?.token) {
@@ -178,6 +184,31 @@ async function createApiToken(jwtToken) {
 // ========================================
 // Base Management Functions
 // ========================================
+
+/**
+ * Finds an existing base by title
+ * @param {string} title - Base title to search for
+ * @param {string} apiToken - API token for authentication
+ * @returns {Promise<object|null>} Existing base object or null if not found
+ */
+async function findExistingBase(title, apiToken) {
+    console.log(`\\n🔎 Searching for existing base: \"${title}\"`);
+    try {
+        const response = await makeNocoDBRequest('/api/v2/meta/bases', 'GET', null, apiToken);
+        if (response && response.list) {
+            const existingBase = response.list.find(base => base.title === title);
+            if (existingBase) {
+                console.log(`✓ Found existing base (ID: ${existingBase.id}, Title: ${existingBase.title})`);
+                return existingBase;
+            }
+        }
+        console.log(`✓ No base found with title: \"${title}\"`);
+        return null;
+    } catch (error) {
+        console.error(`✗ Error searching for base: ${error.message}`);
+        throw error;
+    }
+}
 
 /**
  * Creates a new base in NocoDB
@@ -283,7 +314,7 @@ async function configureBaseSource(baseId, sourceDetails, apiToken) {
  * Main automation workflow
  */
 async function runAutomation() {
-    console.log('🚀 Starting NocoDB PostgreSQL Integration Automation\n');
+    console.log('🚀 Starting NocoDB PostgreSQL Integration Automation\\n');
     console.log('Configuration:');
     console.log(`  NocoDB URL: ${CONFIG.nocodb.baseUrl}`);
     console.log(`  PostgreSQL Host: ${CONFIG.postgres.host}:${CONFIG.postgres.port}`);
@@ -299,28 +330,64 @@ async function runAutomation() {
 
         const apiToken = await createApiToken(jwtToken);
 
-        // Step 2: Create Base
-        const base = await createBase(CONFIG.base.title, apiToken);
+        // Step 2: Check for existing Base
+        let base = await findExistingBase(CONFIG.base.title, apiToken);
+        let pgSource;
 
-        // Step 3: Add PostgreSQL Source
-        const pgSource = await addPostgreSQLSource(
-            base.id,
-            CONFIG.base.sourceAlias,
-            CONFIG.postgres,
-            apiToken
-        );
+        if (base) {
+            console.log(`\\n✅ Base \"${CONFIG.base.title}\" already exists. Skipping creation.`);
+            // Optionally, you could try to find the source if the base exists
+            // For now, we assume if the base exists, setup was likely completed.
+            // To make it more robust, you could list sources for this base and check.
+            // For this example, we'll just report success.
+            // Try to find the source associated with this base to report it
+            const sources = await makeNocoDBRequest(`/api/v2/meta/bases/${base.id}/sources`, 'GET', null, apiToken);
+            if (sources && sources.list && sources.list.length > 0) {
+                // Assuming the first source is the one we're interested in, or match by alias if needed
+                pgSource = sources.list.find(s => s.alias === CONFIG.base.sourceAlias);
+                if (!pgSource && sources.list.length > 0) { // if not found by alias, take the first one
+                    pgSource = sources.list[0];
+                    console.log(`✓ Found existing source (ID: ${pgSource.id}, Alias: ${pgSource.alias}) for base \"${base.title}\"`);
+                } else if (pgSource) {
+                    console.log(`✓ Found existing source (ID: ${pgSource.id}, Alias: ${CONFIG.base.sourceAlias}) for base \"${base.title}\"`);
+                } else {
+                    console.log(`ℹ️ No source named \"${CONFIG.base.sourceAlias}\" found for existing base \"${base.title}\". Manual check might be needed.`);
+                }
+            } else {
+                console.log(`ℹ️ No sources found for existing base \"${base.title}\". Manual check might be needed.`);
+            }
 
-        // Step 4: Configure Base to Use PostgreSQL Source
-        await configureBaseSource(base.id, pgSource, apiToken);
+        } else {
+            console.log(`\\n✨ Base \"${CONFIG.base.title}\" does not exist. Proceeding with creation.`);
+            // Step 2a: Create Base
+            base = await createBase(CONFIG.base.title, apiToken);
+
+            // Step 3: Add PostgreSQL Source
+            pgSource = await addPostgreSQLSource(
+                base.id,
+                CONFIG.base.sourceAlias,
+                CONFIG.postgres,
+                apiToken
+            );
+
+            // Step 4: Configure Base to Use PostgreSQL Source
+            await configureBaseSource(base.id, pgSource, apiToken);
+            console.log(`\\n🎉 New base and source configured successfully!`);
+        }
 
         // Success Summary
-        console.log('\n🎉 Automation completed successfully!');
-        console.log('\nSummary:');
+        console.log('\\n🌟 Automation completed!');
+        console.log('\\nSummary:');
         console.log(`  Base ID: ${base.id}`);
-        console.log(`  Base Title: ${CONFIG.base.title}`);
-        console.log(`  Source ID: ${pgSource.id}`);
-        console.log(`  Source Alias: ${CONFIG.base.sourceAlias}`);
-        console.log(`  NocoDB URL: ${CONFIG.nocodb.baseUrl}/dashboard`);
+        console.log(`  Base Title: ${base.title}`); // Use base.title in case it was pre-existing
+        if (pgSource) {
+            console.log(`  Source ID: ${pgSource.id}`);
+            console.log(`  Source Alias: ${pgSource.alias}`); // Use pgSource.alias
+        } else {
+            console.log(`  Source: Not created or found in this run (as base existed).`);
+        }
+        console.log(`  NocoDB URL: ${CONFIG.nocodb.baseUrl}/dashboard/#/base/${base.id}`);
+
 
         return {
             success: true,

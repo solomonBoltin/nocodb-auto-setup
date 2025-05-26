@@ -5,8 +5,7 @@
   "main": "setup_auto.js",
   "type": "module",
   "scripts": {
-    "start": "node setup_auto.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node setup_auto.js"
   },
   "keywords": [
     "nocodb",
@@ -16,7 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "dotenv": "^16.5.0",
-    "node-fetch": "^3.3.2"
+    "dotenv": "^16.0.0",
+    "node-fetch": "^3.0.0"
   }
 }
